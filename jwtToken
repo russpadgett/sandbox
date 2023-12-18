@@ -1,55 +1,95 @@
 // Install-Package Microsoft.AspNetCore.Authentication.JwtBearer
-
-
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using Microsoft.IdentityModel.Tokens;
-using System.Text;
-
-public string GenerateJwtToken(string username)
-{
-    var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes("Your_Secret_Key_Here"));
-    var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
-
-    var claims = new[]
-    {
-        new Claim(JwtRegisteredClaimNames.Sub, username),
-        new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-    };
-
-    var token = new JwtSecurityToken(
-        issuer: "Your_Issuer",
-        audience: "Your_Audience",
-        claims: claims,
-        expires: DateTime.Now.AddMinutes(30),
-        signingCredentials: credentials
-    );
-
-    return new JwtSecurityTokenHandler().WriteToken(token);
-}
-
-
+// Install-Package System.IdentityModel.Tokens.Jwt
 ---------------------------------------------------------------
+{
+    "JwtSettings": {
+        "SecretKey": "Your_Secret_Key_Here",
+        "Issuer": "Your_Issuer",
+        "Audience": "Your_Audience",
+        "DurationInMinutes": "60" // Token expiration time in minutes
+    },
+}
+---------------------------------------------------------------
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
 
 public void ConfigureServices(IServiceCollection services)
 {
-    services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-            .AddJwtBearer(options =>
-            {
-                options.TokenValidationParameters = new TokenValidationParameters
-                {
-                    ValidateIssuer = true,
-                    ValidateAudience = true,
+    // Configure JWT authentication
+    var jwtSettings = Configuration.GetSection("JwtSettings");
+    var key = Encoding.ASCII.GetBytes(jwtSettings["SecretKey"]);
+
+    services.AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    }).AddJwtBearer(options =>
+    {
+        options.RequireHttpsMetadata = false; // Change to true in production
+        options.SaveToken = true;
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+                    ValidateIssuer = true, //ValidateIssuer = false, // Set to true if you have a specific issuer
+                    ValidIssuer = "Your_Issuer",
+                    ValidateAudience = true, //ValidateAudience = false, // Set to true if you have a specific audience
+                    ValidAudience = "Your_Audience",
                     ValidateLifetime = true,
                     ValidateIssuerSigningKey = true,
-                    ValidIssuer = "Your_Issuer",
-                    ValidAudience = "Your_Audience",
-                    IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes("Your_Secret_Key_Here"))
-                };
-            });
-
-    // ... other configurations
+                    IssuerSigningKey = new SymmetricSecurityKey(key),//IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes("Your_Secret_Key_Here"))
+        };
+    });
 }
+
+public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
+{
+    app.UseAuthentication();
+    app.UseAuthorization();
+}
+---------------------------------------------------------------
+
+using Microsoft.Extensions.Configuration;
+using Microsoft.IdentityModel.Tokens;
+using System;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+
+public class TokenService
+{
+    private readonly IConfiguration _configuration;
+
+    public TokenService(IConfiguration configuration)
+    {
+        _configuration = configuration;
+    }
+
+    public string GenerateToken(string userId, string email)
+    {
+        var jwtSettings = _configuration.GetSection("JwtSettings");
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings["SecretKey"]));
+        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, userId),
+            new Claim(ClaimTypes.Email, email),
+            // Add more claims as needed
+        };
+
+        var token = new JwtSecurityToken(
+            issuer: jwtSettings["Issuer"],
+            audience: jwtSettings["Audience"],
+            claims: claims,
+            expires: DateTime.UtcNow.AddMinutes(double.Parse(jwtSettings["DurationInMinutes"])),
+            signingCredentials: credentials
+        );
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+}
+
+---------------------------------------------------------------
+
 
 
 ---------------------------------------------------------------
@@ -65,6 +105,22 @@ public IActionResult Login([FromBody] UserLoginDto userLogin)
     // Else return unauthorized
 }
 
+//OR
+
+[HttpPost("login")]
+public IActionResult Login([FromBody] LoginModel model)
+{
+    // Authenticate the user (e.g., check credentials)
+
+    // If authentication is successful, generate and return a token
+    if (IsAuthenticated(model))
+    {
+        var token = _tokenService.GenerateToken(userId, email);
+        return Ok(new { Token = token });
+    }
+
+    return Unauthorized();
+}
 ---------------------------------------------------------------
 
 [Authorize]
